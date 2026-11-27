@@ -5,8 +5,9 @@ Trading**. Total pool 12,000 USDT (6,000 per track; 1st 3,000 / 2nd 2,000 / 3rd 
 Submission deadline **3 Dec 2026, 13:00 KST (11:00 WIB)**. Demo Day 5 Dec 2026 in Seoul
 (online pitching allowed for teams outside Korea). Winners announced 6 Dec 2026.
 
-> Status: built and verified locally (Anvil). **Not deployed to any live chain, not
-> submitted to DoraHacks.** Submission is a separate, human decision.
+> Status: built and verified locally (Anvil), **deployed to HSK testnet 27 Nov 2026**
+> (contracts + seeded pool, see Testnet deploy below). **Not submitted to DoraHacks
+> yet.** Submission is a separate, human decision.
 
 ## What it is
 
