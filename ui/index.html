@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horizon Trader — HSK Chain</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --green:#3fb950; --red:#f85149; --accent:#58a6ff; --amber:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:20px; }
+  header span { color:var(--muted); font-size:13px; }
+  main { max-width:980px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .card .value { font-size:22px; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .card .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+  .up { color:var(--green); } .down { color:var(--red); }
+  #chart { width:100%; height:180px; display:block; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:600; }
+  #chat-log { height:220px; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:4px 0; }
+  .msg { max-width:85%; padding:8px 12px; border-radius:10px; font-size:14px; white-space:pre-wrap; }
+  .msg.user { align-self:flex-end; background:#1f6feb; }
+  .msg.agent { align-self:flex-start; background:#21262d; border:1px solid var(--line); }
+  #chat-row { display:flex; gap:8px; margin-top:8px; }
+  #chat-input { flex:1; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font-size:14px; }
+  button { background:#1f6feb; color:#fff; border:0; border-radius:8px; padding:10px 16px; font-size:14px; cursor:pointer; }
+  button:hover { background:#388bfd; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .chip { background:#21262d; border:1px solid var(--line); color:var(--text); border-radius:20px; padding:5px 10px; font-size:12px; cursor:pointer; }
+  .chip:hover { border-color:var(--accent); }
+  .note { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Horizon Trader</h1>
+  <span>AI agent trading on HSK Chain &middot; Track 1, HSK Chain Horizon Hackathon</span>
+  <span id="mode-badge"></span>
+</header>
+<main>
+  <div class="grid">
+    <div class="card"><div class="label">Vault value</div><div class="value" id="vault">—</div><div class="sub" id="vault-sub">mUSDC</div></div>
+    <div class="card"><div class="label">Position</div><div class="value" id="position">—</div><div class="sub" id="position-sub">mHSK</div></div>
+    <div class="card"><div class="label">Spot price</div><div class="value" id="spot">—</div><div class="sub">mUSDC / mHSK</div></div>
+    <div class="card"><div class="label">TWAP (10 min)</div><div class="value" id="twap">—</div><div class="sub">mUSDC / mHSK</div></div>
+    <div class="card"><div class="label">Regime</div><div class="value" id="regime">—</div><div class="sub" id="score-sub">score —</div></div>
+    <div class="card"><div class="label">PnL today</div><div class="value" id="pnl">—</div><div class="sub" id="pnl-sub">vs day start</div></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Price history</div>
+    <svg id="chart" viewBox="0 0 900 180" preserveAspectRatio="none"></svg>
+    <div class="note" id="chart-note">Live from the agent (refreshes every 5s).</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Recent trades</div>
+    <table><thead><tr><th>#</th><th>Action</th><th>Size</th><th>Spot</th><th>Tx</th></tr></thead>
+    <tbody id="trades"><tr><td colspan="5" class="note">No trades yet.</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="label">Talk to the agent</div>
+    <div id="chat-log"></div>
+    <div id="chat-row">
+      <input id="chat-input" placeholder="Ask: status, positions, pnl, weights, history…" autocomplete="off">
+      <button id="chat-send">Send</button>
+    </div>
+    <div class="chips">
+      <button class="chip">status</button><button class="chip">positions</button>
+      <button class="chip">pnl</button><button class="chip">weights</button>
+      <button class="chip">history</button><button class="chip">set size 1500</button>
+    </div>
+    <p class="note">The agent answers from live on-chain state. Risk limits (stop-loss, circuit breaker, max size) are enforced by the vault contract, not just the UI.</p>
+  </div>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+const DEMO = params.get("demo") === "1";
+document.getElementById("mode-badge").textContent = DEMO ? "DEMO MODE — simulated data" : "LIVE — Anvil / HSK testnet";
+
+// ---- demo data generator (no backend needed) ----
+let demo = null;
+function demoState() {
+  if (!demo) {
+    demo = { t: 0, price: 2.0, history: [], vault: 1000, pos: 0, entry: 0, trades: [] };
+    for (let i = 0; i < 40; i++) demo.history.push({ ts: i, price: 2.0 + Math.sin(i / 5) * 0.05 });
+  }
+  demo.t++;
+  const drift = demo.t < 15 ? 0.02 : demo.t < 30 ? -0.06 : 0.015;
+  demo.price = Math.max(0.5, demo.price * (1 + drift + (Math.random() - 0.5) * 0.01));
+  demo.history.push({ ts: demo.t, price: demo.price });
+  if (demo.history.length > 100) demo.history.shift();
+  const regime = drift < -0.03 ? "crash" : drift > 0.015 ? "trending" : "ranging";
+  return {
+    tick: demo.t, spot: demo.price, twap: demo.price * 0.98,
+    vault: { vaultValue: demo.vault, positionBase: demo.pos, entryPrice: demo.entry || demo.price, positionValue: demo.pos * demo.price, dayStartValue: 1000, paused: false, circuitBroken: false },
+    pnlPct: (demo.vault - 1000) / 1000,
+    signal: { regime, score: regime === "crash" ? -0.6 : regime === "trending" ? 0.45 : 0.1 },
+    trades: demo.trades, weights: { momentum: 0.4, meanReversion: 0.35, volume: 0.15 },
+    history: demo.history,
+  };
+}
+
+// ---- rendering ----
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d = 2) => (n == null || isNaN(n) ? "—" : Number(n).toFixed(d));
+
+function render(s) {
+  const v = s.vault || {};
+  $("vault").textContent = fmt(v.vaultValue) + " mUSDC";
+  $("vault-sub").textContent = "day start " + fmt(v.dayStartValue) + " mUSDC";
+  $("position").textContent = fmt(v.positionBase) + " mHSK";
+  $("position-sub").textContent = "entry " + fmt(v.entryPrice, 4) + " · value " + fmt(v.positionValue) + " mUSDC";
+  $("spot").textContent = fmt(s.spot, 4);
+  $("twap").textContent = fmt(s.twap, 4);
+  $("regime").textContent = (s.signal && s.signal.regime) || "—";
+  $("score-sub").textContent = "score " + fmt(s.signal && s.signal.score);
+  const pnl = (s.pnlPct || 0) * 100;
+  const pnlEl = $("pnl");
+  pnlEl.textContent = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+  pnlEl.className = "value " + (pnl >= 0 ? "up" : "down");
+  $("pnl-sub").textContent = (s.trades ? s.trades.length : 0) + " trades · tick " + (s.tick || 0);
+
+  // chart
+  const h = s.history || [];
+  const svg = $("chart");
+  if (h.length > 1) {
+    const prices = h.map((p) => p.price);
+    const lo = Math.min(...prices), hi = Math.max(...prices);
+    const span = hi - lo || 1;
+    const pts = h.map((p, i) => `${(i / (h.length - 1)) * 900},${170 - ((p.price - lo) / span) * 160}`).join(" ");
+    const last = prices[prices.length - 1];
+    const color = last >= prices[0] ? "#3fb950" : "#f85149";
+    svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"/>` +
+      `<text x="8" y="16" fill="#8b949e" font-size="12">high ${hi.toFixed(4)}</text>` +
+      `<text x="8" y="174" fill="#8b949e" font-size="12">low ${lo.toFixed(4)}</text>`;
+  }
+  // trades
+  const tb = $("trades");
+  if (s.trades && s.trades.length) {
+    tb.innerHTML = s.trades.slice(-8).reverse().map((t) =>
+      `<tr><td>${t.tick}</td><td class="${t.action === "buy" ? "up" : "down"}">${t.action}</td><td>${t.sizeBps} bps</td><td>${fmt(t.spot, 4)}</td><td>${(t.tx || "").slice(0, 12)}…</td></tr>`).join("");
+  }
+  if (DEMO) $("chart-note").textContent = "Demo mode: simulated price feed, no chain connected. Run the agent for live data.";
+}
+
+async function refresh() {
+  try {
+    const s = DEMO ? demoState() : await (await fetch("/api/state")).json();
+    render(s);
+  } catch (e) { /* backend not up yet; keep last render */ }
+}
+refresh();
+setInterval(refresh, 5000);
+
+// ---- chat ----
+const log = $("chat-log");
+function addMsg(text, who) {
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+addMsg("Hi, I am Horizon Trader. Ask me about positions, PnL, or the market regime — or change the trade size with 'set size 1500'.", "agent");
+
+async function sendChat(text) {
+  if (!text.trim()) return;
+  addMsg(text, "user");
+  if (DEMO) {
+    addMsg("Demo mode: the chat answers from simulated state. Start the agent (node agent/server.js) for live answers.", "agent");
+    return;
+  }
+  try {
+    const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+    const j = await r.json();
+    addMsg(j.reply, "agent");
+  } catch (e) {
+    addMsg("The agent backend is not reachable right now.", "agent");
+  }
+}
+$("chat-send").onclick = () => { const i = $("chat-input"); sendChat(i.value); i.value = ""; };
+$("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("chat-send").click(); });
+document.querySelectorAll(".chip").forEach((c) => c.onclick = () => sendChat(c.textContent));
+</script>
+</body>
+</html>
